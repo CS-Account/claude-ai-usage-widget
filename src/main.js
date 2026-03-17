@@ -54,6 +54,10 @@
     /** @type {HTMLElement|null} */ let refreshButtonElement = null;
     /** @type {HTMLElement|null} */ let minimizeButtonElement = null;
     /** @type {HTMLElement|null} */ let buttonRowElement = null;
+    /** @type {HTMLElement|null} */ let miniHourValueElement = null;
+    /** @type {HTMLElement|null} */ let miniDayValueElement = null;
+    /** @type {HTMLElement|null} */ let miniHourRowElement = null;
+    /** @type {HTMLElement|null} */ let miniDayRowElement = null;
 
     /* ─────────────────────────── helpers ─────────────────────────── */
 
@@ -136,7 +140,7 @@
             flex-direction: column;
             gap: 5px;
             padding: 9px 11px;
-            border-radius: 27px;
+            border-radius: 16px;
 
             background: rgba(20, 20, 20, 0.52);
             backdrop-filter: blur(4px);
@@ -156,12 +160,9 @@
             background: rgba(180, 140, 0, 0.6);
         }
 
-        /* Minimized — collapses to a fixed-size circle showing only the minimize button */
+        /* Minimized — compact column: labels, percentages, then the maximize button */
         #claude-usage-panel.minimized {
-            padding: 0;
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
+            padding: 6px 9px;
             gap: 0;
             align-items: center;
             justify-content: center;
@@ -174,27 +175,10 @@
 
         #claude-usage-panel.minimized #button-row {
             gap: 0;
-            margin-top: 0;
+            margin-top: 4px;
         }
 
-        #claude-usage-panel.minimized #minimize-button {
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            padding: 0;
-            background: transparent;
-            border-radius: 50%;
-        }
-
-        #claude-usage-panel.minimized #minimize-button:hover {
-            background: rgba(255, 255, 255, 0.15);
-            opacity: 1;
-        }
-
-        /* Fetch-state and usage-threshold colour feedback on the ◉ circle when minimized */
+        /* Fetch-state and usage-threshold colour feedback on the maximize button when minimized */
         #claude-usage-panel.minimized #minimize-button {
             transition: color 0.3s;
         }
@@ -222,6 +206,18 @@
         /* Usage-threshold colour classes — >75% 5H is yellow, >75% 7D is darker yellow */
         .stat-row.usage-warn-five-hour { color: rgba(255, 220,  60, 1); }
         .stat-row.usage-warn-seven-day { color: rgba(210, 155,  20, 1); }
+
+        /* Mini stat display — visible only in minimized state */
+        .mini-row { display: none; flex-direction: column; align-items: center; text-align: center; line-height: 1.1; }
+        #claude-usage-panel.minimized .mini-row { display: flex; }
+        .mini-label { font-size: 10px; opacity: 0.65; }
+        .mini-value { font-size: 17px; font-weight: 700; line-height: 1.2; transition: color 0.3s; }
+        .mini-separator { display: none; height: 5px; }
+        #claude-usage-panel.minimized .mini-separator { display: block; }
+        .mini-value.fetch-loading { color: rgba(150, 150, 150, 0.55); }
+        .mini-value.fetch-failed  { color: rgba(210, 200, 185, 0.80); }
+        .mini-value.usage-warn-five-hour { color: rgba(255, 220,  60, 1); }
+        .mini-value.usage-warn-seven-day { color: rgba(210, 155,  20, 1); }
 
         /* Shared button style — rounded rect with a slight background inversion */
         .panel-button {
@@ -253,6 +249,31 @@
 
         widget = document.createElement('div');
         widget.id = 'claude-usage-panel';
+
+        miniHourRowElement = document.createElement('div');
+        const miniFiveHourRow = miniHourRowElement;
+        miniFiveHourRow.className = 'mini-row';
+        const miniFiveHourLabel = document.createElement('div');
+        miniFiveHourLabel.className = 'mini-label';
+        miniFiveHourLabel.textContent = '5h';
+        miniHourValueElement = document.createElement('div');
+        miniHourValueElement.className = 'mini-value';
+        miniHourValueElement.textContent = '--';
+        miniFiveHourRow.append(miniFiveHourLabel, miniHourValueElement);
+
+        const miniSeparator = document.createElement('div');
+        miniSeparator.className = 'mini-separator';
+
+        miniDayRowElement = document.createElement('div');
+        const miniSevenDayRow = miniDayRowElement;
+        miniSevenDayRow.className = 'mini-row';
+        const miniSevenDayLabel = document.createElement('div');
+        miniSevenDayLabel.className = 'mini-label';
+        miniSevenDayLabel.textContent = '7d';
+        miniDayValueElement = document.createElement('div');
+        miniDayValueElement.className = 'mini-value';
+        miniDayValueElement.textContent = '--';
+        miniSevenDayRow.append(miniSevenDayLabel, miniDayValueElement);
 
         fiveHourRow = document.createElement('div');
         fiveHourRow.className = 'stat-row';
@@ -290,7 +311,7 @@
         buttonRowElement.id = 'button-row';
         buttonRowElement.append(refreshButtonElement, minimizeButtonElement);
 
-        widget.append(fiveHourRow, sevenDayRow, monthlySpendRow, buttonRowElement);
+        widget.append(miniFiveHourRow, miniSeparator, miniSevenDayRow, fiveHourRow, sevenDayRow, monthlySpendRow, buttonRowElement);
         document.body.appendChild(widget);
 
         /* Restore saved vertical position, overriding the CSS translateY default */
@@ -396,7 +417,18 @@
             }
         });
 
-        /* ── Minimized circle colour — mirrors row state (no spend-over-limit) ── */
+        /* ── Mini value colour — mirrors row state ── */
+        [miniHourValueElement, miniDayValueElement].forEach(el => {
+            if (!el) return;
+            el.classList.remove('fetch-loading', 'fetch-failed');
+            if (status === 'loading') el.classList.add('fetch-loading');
+            if (status === 'failed') el.classList.add('fetch-failed');
+            if (status === 'loading' || status === 'failed') {
+                el.classList.remove('usage-warn-five-hour', 'usage-warn-seven-day');
+            }
+        });
+
+        /* ── Minimized button colour — mirrors row state (no spend-over-limit) ── */
         if (minimizeButtonElement) {
             minimizeButtonElement.classList.remove('fetch-loading', 'fetch-failed');
             if (status === 'loading') minimizeButtonElement.classList.add('fetch-loading');
@@ -432,6 +464,8 @@
         if (fiveHourRow) fiveHourRow.textContent = '5H: ' + fiveHour;
         if (sevenDayRow) sevenDayRow.textContent = '7D: ' + sevenDay;
         if (monthlySpendRow) monthlySpendRow.textContent = 'M$: ' + monthlySpend;
+        if (miniHourValueElement) miniHourValueElement.textContent = fiveHour.replace('%', '');
+        if (miniDayValueElement) miniDayValueElement.textContent = sevenDay.replace('%', '');
     }
 
     /**
@@ -531,14 +565,20 @@
             const sevenDayOver = (usageData?.seven_day?.utilization ?? 0) > 75;
             if (fiveHourRow) fiveHourRow.classList.toggle('usage-warn-five-hour', fiveHourOver);
             if (sevenDayRow) sevenDayRow.classList.toggle('usage-warn-seven-day', sevenDayOver);
-            /* Minimized circle shows the most severe active warning */
+            if (miniHourValueElement) miniHourValueElement.classList.toggle('usage-warn-five-hour', fiveHourOver);
+            if (miniDayValueElement) miniDayValueElement.classList.toggle('usage-warn-seven-day', sevenDayOver);
+            /* Minimized button shows the most severe active warning */
             if (minimizeButtonElement) {
                 minimizeButtonElement.classList.toggle('usage-warn-seven-day', sevenDayOver);
                 minimizeButtonElement.classList.toggle('usage-warn-five-hour', fiveHourOver && !sevenDayOver);
             }
 
-            if (fiveHourRow) fiveHourRow.title = `resets: ${formatResetTime(usageData?.five_hour?.resets_at)}`;
-            if (sevenDayRow) sevenDayRow.title = `resets: ${formatResetTime(usageData?.seven_day?.resets_at)}`;
+            const fiveHourTitle = `resets: ${formatResetTime(usageData?.five_hour?.resets_at)}`;
+            const sevenDayTitle = `resets: ${formatResetTime(usageData?.seven_day?.resets_at)}`;
+            if (fiveHourRow) fiveHourRow.title = fiveHourTitle;
+            if (sevenDayRow) sevenDayRow.title = sevenDayTitle;
+            if (miniHourRowElement) miniHourRowElement.title = fiveHourTitle;
+            if (miniDayRowElement) miniDayRowElement.title = sevenDayTitle;
             const extraUsage = usageData?.extra_usage;
             if (monthlySpendRow && extraUsage) {
                 const formattedSpend = extraUsage.used_credits != null && isFinite(extraUsage.used_credits)
