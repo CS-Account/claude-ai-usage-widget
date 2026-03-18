@@ -182,6 +182,25 @@
     }
 
     /**
+     * Clamps the widget so it stays fully within the current viewport.
+     * Only applies when the widget has an explicit pixel `top` (i.e. after drag or restore).
+     * @returns {void}
+     */
+    function clampWidgetPosition() {
+        if (!widget) return;
+        /* If still using the CSS % default, nothing to clamp */
+        if (!widget.style.top || widget.style.top === '') return;
+        const currentTop = parseFloat(widget.style.top);
+        if (isNaN(currentTop)) return;
+        const maxTop = window.innerHeight - widget.offsetHeight;
+        const clampedTop = Math.max(0, Math.min(maxTop, currentTop));
+        if (clampedTop !== currentTop) {
+            widget.style.top = clampedTop + 'px';
+            localStorage.setItem(POSITION_STORAGE_KEY, widget.style.top);
+        }
+    }
+
+    /**
      * Injects CSS and builds the widget DOM, then attaches it to body.
      * @returns {void}
      */
@@ -332,11 +351,15 @@
         if (savedVerticalPosition) {
             widget.style.transform = 'none';
             widget.style.top = savedVerticalPosition;
+            clampWidgetPosition();
         }
 
         setWidgetPending(true);
         setFetchStatus('idle');
         makeDraggable(widget);
+
+        /* Keep widget fully on-screen when the viewport shrinks (e.g. DevTools opens) */
+        window.addEventListener('resize', clampWidgetPosition);
     }
 
     /**
