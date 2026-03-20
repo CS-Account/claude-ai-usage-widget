@@ -13,6 +13,11 @@
 
 (() => {
     /**
+     * @typedef {'vertical'|'horizontal'} WidgetMode
+     * @typedef {{ verticalPositionPx: number|null, horizontalPositionPx: number|null, mode: WidgetMode }} WidgetState
+     */
+
+    /**
      * XPath to locate the near-limit warning banner in the chat box.
      * Matches the outermost ancestor div (px-3 md:px-2) containing a usage-limit span.
      * @type {string}
@@ -27,8 +32,16 @@
     /** Debounce delay for org-ID search after page mutations (ms). @type {number} */
     const DEBOUNCE_DELAY_MS = 500;
 
+    /** Duration of the 5-hour rolling window (ms). @type {number} */
+    const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+    /** Duration of the 7-day rolling window (ms). @type {number} */
+    const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+
     /** localStorage key for persisting widget state (position + mode). @type {string} */
     const STATE_STORAGE_KEY = 'claude-usage-panel-state';
+
+    /** Default persisted state. @type {WidgetState} */
+    const DEFAULT_STATE = { verticalPositionPx: null, horizontalPositionPx: null, mode: 'vertical' };
 
     /** CSS class names for the two themes. @type {string} */
     const DARK_CLASS  = 'theme-dark';
@@ -51,16 +64,9 @@
 
     /**
      * Persisted widget state.
-     * @type {{ verticalPositionPx: number|null, horizontalPositionPx: number|null, mode: string }}
+     * @type {WidgetState}
      */
-    let state = {
-        verticalPositionPx: null,
-        horizontalPositionPx: null,
-        mode: 'vertical',
-    };
-
-    /** @type {string} */
-    let currentMode = 'vertical';
+    let state = { ...DEFAULT_STATE };
 
     /* --- Widget element refs --- */
     /** @type {HTMLElement|null} */ let widget = null;
@@ -209,17 +215,14 @@
 
     /**
      * Loads widget state from localStorage, with defaults.
-     * @returns {{ verticalPositionPx: number|null, horizontalPositionPx: number|null, mode: string }}
+     * @returns {WidgetState}
      */
     function loadState() {
         try {
             const raw = localStorage.getItem(STATE_STORAGE_KEY);
-            if (raw) return Object.assign(
-                { verticalPositionPx: null, horizontalPositionPx: null, mode: 'vertical' },
-                JSON.parse(raw)
-            );
+            if (raw) return Object.assign({ ...DEFAULT_STATE }, JSON.parse(raw));
         } catch {}
-        return { verticalPositionPx: null, horizontalPositionPx: null, mode: 'vertical' };
+        return { ...DEFAULT_STATE };
     }
 
     /**
@@ -269,44 +272,43 @@
      * Clamps the widget so it stays fully within the current viewport.
      * In vertical mode clamps top; in horizontal mode clamps left.
      * Only applies when the widget has an explicit pixel position (i.e. after drag or restore).
-     * @returns {void}
+     * @returns {boolean} true if the position was changed (caller should call saveState)
      */
     function clampWidgetPosition() {
-        if (!widget) return;
-        if (currentMode === 'horizontal') {
-            if (!widget.style.left || widget.style.left.endsWith('%')) return;
+        if (!widget) return false;
+        if (state.mode === 'horizontal') {
+            if (!widget.style.left || widget.style.left.endsWith('%')) return false;
             const currentLeft = parseFloat(widget.style.left);
-            if (isNaN(currentLeft)) return;
+            if (isNaN(currentLeft)) return false;
             const maxLeft = window.innerWidth - widget.offsetWidth;
             const clamped = Math.max(0, Math.min(maxLeft, currentLeft));
             if (clamped !== currentLeft) {
                 widget.style.left = clamped + 'px';
                 state.horizontalPositionPx = clamped;
-                saveState();
+                return true;
             }
         } else {
-            if (!widget.style.top || widget.style.top.endsWith('%')) return;
+            if (!widget.style.top || widget.style.top.endsWith('%')) return false;
             const currentTop = parseFloat(widget.style.top);
-            if (isNaN(currentTop)) return;
+            if (isNaN(currentTop)) return false;
             const maxTop = window.innerHeight - widget.offsetHeight;
             const clamped = Math.max(0, Math.min(maxTop, currentTop));
             if (clamped !== currentTop) {
                 widget.style.top = clamped + 'px';
                 state.verticalPositionPx = clamped;
-                saveState();
+                return true;
             }
         }
+        return false;
     }
 
     /**
-     * Applies a layout mode ('vertical' or 'horizontal'), repositioning the widget
-     * and updating the mode button icon.
-     * @param {string} newMode
+     * Applies a layout mode, repositioning the widget and updating the mode button icon.
+     * @param {WidgetMode} newMode
      * @returns {void}
      */
     function applyMode(newMode) {
         if (!widget) return;
-        currentMode = newMode;
         state.mode = newMode;
         widget.classList.toggle('mode-horizontal', newMode === 'horizontal');
 
@@ -334,8 +336,8 @@
             if (modeButtonElement) modeButtonElement.innerHTML = SVG_ARROWS_H;
         }
 
-        saveState();
         clampWidgetPosition();
+        saveState();
     }
 
     /**
@@ -343,7 +345,7 @@
      * @returns {void}
      */
     function toggleMode() {
-        applyMode(currentMode === 'horizontal' ? 'vertical' : 'horizontal');
+        applyMode(state.mode === 'horizontal' ? 'vertical' : 'horizontal');
     }
 
     /**
@@ -564,7 +566,7 @@
         /* Monthly section disabled/exceeded states */
         .period-label.label-disabled { color: var(--clr-state-disabled); }
         .period-label.label-exceeded { color: var(--clr-exceeded); }
-.period-secondary--spacer { display: none; }
+        .period-secondary--spacer { display: none; }
         :host(.mode-horizontal) .period-secondary--spacer {
             display: block; visibility: hidden;
         }
@@ -667,7 +669,7 @@
         makeDraggable(widget);
 
         /* Keep widget fully on-screen when the viewport resizes (e.g. DevTools opens) */
-        window.addEventListener('resize', clampWidgetPosition);
+        window.addEventListener('resize', () => { if (clampWidgetPosition()) saveState(); });
     }
 
     /**
@@ -754,7 +756,7 @@
             startLeft = rect.left;
             startTop = rect.top;
             draggableElement.style.transform = 'none';
-            if (currentMode === 'horizontal') {
+            if (state.mode === 'horizontal') {
                 draggableElement.style.left = startLeft + 'px';
             } else {
                 draggableElement.style.top = startTop + 'px';
@@ -765,7 +767,7 @@
         document.addEventListener('mousemove',
         (/** @type {MouseEvent} */ event) => {
             if (!active) return;
-            if (currentMode === 'horizontal') {
+            if (state.mode === 'horizontal') {
                 const deltaX = event.clientX - startX;
                 if (Math.abs(deltaX) > 4) dragMoved = true;
                 const clamped = Math.max(0, Math.min(
@@ -786,7 +788,7 @@
 
         document.addEventListener('mouseup', () => {
             if (active && dragMoved) {
-                if (currentMode === 'horizontal') {
+                if (state.mode === 'horizontal') {
                     state.horizontalPositionPx = parseFloat(draggableElement.style.left);
                 } else {
                     state.verticalPositionPx = parseFloat(draggableElement.style.top);
@@ -844,14 +846,14 @@
                 fetch(makeRequest('usage')),
                 fetch(makeRequest('overage_spend_limit')),
             ]);
-            if (!usageResponse.ok) throw new Error('HTTP ' + usageResponse.status);
 
             const [data, overage] = /** @type {[UsageData, OverageData|null]} */ (
                 await Promise.all([
-                    usageResponse.json(),
+                    usageResponse.ok ? usageResponse.json() : Promise.resolve(null),
                     overageResponse.ok ? overageResponse.json() : Promise.resolve(null),
                 ])
             );
+            if (!usageResponse.ok) throw new Error('HTTP ' + usageResponse.status);
             console.debug('[claude-ai-usage-widget] usage data:', data);
             console.debug('[claude-ai-usage-widget] overage data:', overage);
 
@@ -916,15 +918,12 @@
                 sevenDayValueElement.classList.toggle('warn-7d', sevenDayOver);
 
             /* --- Tooltips --- */
-            const fiveHourPeriodMs = 5 * 60 * 60 * 1000;
-            const sevenDayPeriodMs = 7 * 24 * 60 * 60 * 1000;
-
             if (fiveHourSectionElement) {
                 fiveHourSectionElement.title = [
                     'usage:     ' + fiveHourPct,
                     'resets in: ' + fiveHourCountdown,
                     'resets at: ' + fiveHourResetFull,
-                    'elapsed:   ' + periodElapsed(data?.five_hour?.resets_at, fiveHourPeriodMs),
+                    'elapsed:   ' + periodElapsed(data?.five_hour?.resets_at, FIVE_HOUR_MS),
                 ].join('\n');
             }
             if (sevenDaySectionElement) {
@@ -937,14 +936,14 @@
                     'resets in: ' + sevenDayCountdown,
                     'resets at: ' + [sevenDayResetFull, sevenDayOfWeek]
                         .filter(Boolean).join(' '),
-                    'elapsed:   ' + periodElapsed(data?.seven_day?.resets_at, sevenDayPeriodMs),
+                    'elapsed:   ' + periodElapsed(data?.seven_day?.resets_at, SEVEN_DAY_MS),
                 ].join('\n');
             }
             if (monthlySectionElement && overage) {
                 const spendStr = overageEnabled && rawUsedCredits != null
-                    ? '$' + (rawUsedCredits / 100).toFixed(2) : '--';
+                    ? '$' + formatDollars(rawUsedCredits) : '--';
                 const limitStr = overageEnabled && rawCreditLimit != null
-                    ? '$' + (rawCreditLimit / 100).toFixed(2) : '--';
+                    ? '$' + formatDollars(rawCreditLimit) : '--';
                 const currency   = overage?.currency ?? '';
                 const utilStr    = overageUtilization != null
                     ? formatPercent(overageUtilization) : '--';
