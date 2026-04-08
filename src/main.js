@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Claude AI Usage Widget
 // @namespace    claude-ai-usage-widget
-// @version      0.3.2
+// @version      0.3.3
 // @description  Floating usage stats widget for claude.ai; suppresses the chat-box usage warning.
-// @author       CS-Account
+// @author       merely-present
 // @match        https://claude.ai/*
 // @grant        none
 // ==/UserScript==
@@ -871,17 +871,20 @@
             if (sevenDayCountdownElement) sevenDayCountdownElement.textContent = sevenDayCountdown;
 
             /* --- Monthly (overage endpoint) --- */
+            const now = new Date();
             const overageEnabled  = overage?.is_enabled === true;
             const disabledUntilRaw = overage?.disabled_until ?? null;
-            const overageExceeded = overageEnabled && disabledUntilRaw != null;
+            const isDisabledUntilValid = disabledUntilRaw && new Date(disabledUntilRaw) > now;
             const rawUsedCredits  = overageEnabled ? (overage?.used_credits           ?? null) : null;
             const rawCreditLimit  = overageEnabled ? (overage?.monthly_credit_limit   ?? null) : null;
-            const overageUtilization = (rawUsedCredits != null && rawCreditLimit != null && rawCreditLimit > 0)
+            const overageUtilizationFallback = (rawUsedCredits != null && rawCreditLimit != null && rawCreditLimit > 0)
                 ? (rawUsedCredits / rawCreditLimit) * 100 : null;
+            const overageUtilization = data?.extra_usage?.utilization ?? overageUtilizationFallback;
+            const overageExceeded = overageEnabled && (isDisabledUntilValid || (overageUtilization != null && overageUtilization >= 100));
 
-            /* Effective reset: disabled_until directly when set, otherwise first of next month */
-            const now = new Date();
-            const effectiveResetIso = disabledUntilRaw
+            /* Effective reset: extra_usage resets_at, or valid disabled_until, otherwise first of next month */
+            const effectiveResetIso = data?.extra_usage?.resets_at
+                ?? (isDisabledUntilValid ? disabledUntilRaw : null)
                 ?? new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
             const effectiveResetDate = new Date(effectiveResetIso);
             const monthPeriodMs = effectiveResetDate.getTime()
